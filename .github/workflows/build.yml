@@ -1,0 +1,156 @@
+---
+name: build
+on: [deployment, push]
+
+jobs:
+  detect-secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: 3.x
+
+      - name: Install Yelp detect-secrets
+        run: |
+          pip install detect-secrets
+
+      - name: Execulte detect-secrets(disabled KeywordDetector plugin)
+        run: |
+          detect-secrets scan --disable-plugin KeywordDetector \
+          | jq .results > results.json
+
+      - name: Check whether detect-secrets found vulnerability
+        run: |
+          line=$(cat results.json | wc -w)
+          if [ $line -gt 2 ]; then
+            echo "vulnerability was found"
+            detect-secrets scan | jq .results -C
+            exit 1;
+          fi
+
+      - name: Show detect-secrets version
+        run: |
+          pip list | grep detect-secrets \
+          | GREP_COLORS='mt=01;34' egrep --color=always '[[:digit:]]' \
+          | GREP_COLORS='mt=01;34' egrep --color=always '\.' \
+          | GREP_COLORS='mt=01;33' egrep --color=always 'detect-secrets.* '
+
+  github-container-registory:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: 3.x
+
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Install dependencies
+        run: python3 -m pip install -r requirements.txt
+
+      - name: Set Ansible Python interpreter
+        run: |
+          INTERPRETER=`which python`
+          echo "ANSIBLE_PYTHON_INTERPRETER=${INTERPRETER}" >> $GITHUB_ENV
+
+      - name: Set environment variable with timestamp for making sure Ansible would create unique AWS resources
+        run: |
+          TIMESTAMP=$(date --date "9 hours" "+%Y%m%d_%H%M%S")
+          echo "AWSIAM_USER=ansible-test_httpd-log_${TIMESTAMP}" >> $GITHUB_ENV
+          echo "AWSIAM_POLICY_NAME=ansible-test_httpd-log_${TIMESTAMP}" >> $GITHUB_ENV
+
+      - name: Install required Ansible role
+        run: |
+          ansible-galaxy install -r requirements.yml
+
+      - name: Retrieve Ansible playbook
+        uses: actions/checkout@v2
+        with:
+          repository: ansible-playbooks-mamono210/awsiam
+          path: awsiam
+
+      - name: Create AWS Access Key
+        run: |
+          mv s3_policy.json awsiam/
+          cd awsiam
+          ansible-playbook -i localhost, -c local \
+          -e 'linux_group=runner' \
+          -e 'linux_user=runner' \
+          -e 'linux_userhome=/home/runner' \
+          -e "aws_region=${{ secrets.AWS_DEFAULT_REGION }}" \
+          -e "awsiam_user=${AWSIAM_USER}" \
+          -e 'awsiam_user_state=present' \
+          -e 'awsiam_policy_file_path=s3_policy.json' \
+          -e "awsiam_policy_name=${AWSIAM_POLICY_NAME}" \
+          install.yml
+        env:
+          ANSIBLE_FORCE_COLOR: '1'
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID_1 }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY_1 }}
+          PY_COLORS: '1'
+
+      - name: Set AWS access key vaules to environment variavbles
+        run: |
+          AWS_ACCESS_KEY_ID=$(cat ~/.aws/credentials | grep aws_access_key_id | awk '{print $3}')
+          AWS_SECRET_ACCESS_KEY=$(cat ~/.aws/credentials | grep aws_secret_access_key | awk '{print $3}')
+          echo "::add-mask::${AWS_ACCESS_KEY_ID}"
+          echo "::add-mask::${AWS_SECRET_ACCESS_KEY}"
+          echo "AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}" >> $GITHUB_ENV
+          echo "AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}" >> $GITHUB_ENV
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v1
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.CR_PAT}}
+
+      - name: Build Docker image
+        run: |
+          docker build \
+          --build-arg "AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}" \
+          --build-arg "AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}" \
+          --build-arg "AWS_DEFAULT_REGION=${{ secrets.AWS_DEFAULT_REGION }}" \
+          --build-arg S3_BUCKET=tomonorimatsumura-docker \
+          --build-arg S3_OBJECT=httpd_logs \
+          -t ghcr.io/docker-hub-tm/ansible-test/httpd_log:latest .
+
+      - name: Delete AWS Access Key
+        run: |
+          cd awsiam
+          ansible-playbook -i localhost, -c local \
+          -e "awsiam_user=${AWSIAM_USER}" \
+          -e 'awsiam_user_state=absent' \
+          install.yml
+        env:
+          ANSIBLE_FORCE_COLOR: '1'
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID_1 }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY_1 }}
+          PY_COLORS: '1'
+
+      - name: Push Docker build image
+        run: |
+          docker push ghcr.io/docker-hub-tm/ansible-test/httpd_log:latest
+
+  find-trailing-whitespace:
+    name: Find Trailing Whitespace
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: harupy/find-trailing-whitespace@56310d70ae8fd21afec8d4307d2d9ab6c15e7c5d
+
+  yamllint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: yaml-lint
+        uses: ibiqlik/action-yamllint@665205c3255fcf157ef8dc9a40d527fe025a4bc8
+        with:
+          config_file: .yamllint
