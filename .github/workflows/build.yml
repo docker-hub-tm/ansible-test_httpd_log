@@ -117,8 +117,8 @@ jobs:
           --build-arg "AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}" \
           --build-arg "AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}" \
           --build-arg "AWS_DEFAULT_REGION=${{ secrets.AWS_DEFAULT_REGION }}" \
-          --build-arg S3_BUCKET=tomonorimatsumura-docker \
-          --build-arg S3_OBJECT=httpd_logs \
+          --build-arg "S3_BUCKET=${{ secrets.S3_BUCKET }}" \
+          --build-arg "S3_OBJECT=${{ secrets.S3_OBJECT }}" \
           -t ghcr.io/docker-hub-tm/ansible-test/httpd_log:latest .
 
       - name: Delete AWS Access Key
