@@ -3,6 +3,7 @@ FROM centos:8 AS builder
 ARG AWS_ACCESS_KEY_ID
 ARG AWS_SECRET_ACCESS_KEY
 ARG AWS_DEFAULT_REGION
+ARG AWSCLI_URL='https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip'
 ARG S3_BUCKET
 ARG S3_OBJECT
 
@@ -15,7 +16,7 @@ WORKDIR /root
 # Install AWS CLI
 RUN dnf clean all \
   && dnf install zip unzip sudo -y \
-  && curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-2.0.30.zip" -o "awscliv2.zip" \
+  && curl "$AWSCLI_URL" -o "awscliv2.zip" \
   && unzip awscliv2.zip \
   && sudo ./aws/install
 
